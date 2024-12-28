@@ -18,7 +18,6 @@ primary_branch_params = {
 secondary_branch_params = {
     "angles": [40, -40] * 6,  # degrees
     "relative_positions": [0.4, 0.7, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.4, 0.7],  # in % branch length
-    "angles": [40, -40] * 6,  # degrees
     "diameters": [8, 7, 7, 8, 10, 9, 7, 9, 8, 9, 10, 7],  # mm
     "length": 50,  # mm
 }
@@ -71,6 +70,7 @@ def create_secondary_branch(parent_position, parent_angle, offset_percent, angle
     return secondary_branch
 
 # Define the main branch
+print("Generating the main branch...")
 outer_circle = cq.Sketch().circle(main_branch_params["diameter"] / 2 + wall_thickness)
 main_branch = (
     cq.Workplane("XZ")
@@ -95,6 +95,7 @@ for i, branch_angle in enumerate(primary_branch_params["angles"]):
     branch_diameter = primary_branch_params["diameters"][i]
 
     # Create primary branch
+    print(f"Adding primary branch {i + 1}/{len(primary_branch_params['angles'])}...")
     branch = create_branch(branch_position, branch_angle, branch_diameter, primary_branch_params["length"])
     main_branch = main_branch.union(branch)
 
@@ -110,6 +111,7 @@ for i, branch_angle in enumerate(primary_branch_params["angles"]):
 
     # Create secondary branches
     for _ in range(2):
+        print(f"    Adding secondary branch connected to primary branch {i + 1}...")
         secondary_branch = create_secondary_branch(
             branch_position,
             branch_angle,
@@ -141,6 +143,7 @@ for i, branch_angle in enumerate(primary_branch_params["angles"]):
         secondary_index += 1
 
 # Subtract holes from the main structure
+print("Subtracting holes from the structure...")
 for hole in holes:
     main_branch = main_branch.cut(hole)
 
