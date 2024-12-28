@@ -3,7 +3,7 @@
 
 This repository contains a Python script that generates a 3D model of a vascular tree structure using CadQuery. The model consists of a main branch, primary branches, and secondary branches, with configurable parameters for dimensions, angles, and positions.
 
-![Example Vascular Tree Model](data/example_vessel.png)
+![Example Vascular Tree Model](data/vessel_example.png)
 
 ## Features
 
