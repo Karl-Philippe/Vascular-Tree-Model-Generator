@@ -1,10 +1,11 @@
 import cadquery as cq
 import math
+import os
 
 # Parameters
 main_branch_params = {
     "diameter": 20,  # mm
-    "length": 210,  # mm
+    "length": 200,  # mm
 }
 
 primary_branch_params = {
@@ -15,14 +16,18 @@ primary_branch_params = {
 }
 
 secondary_branch_params = {
-    "angles": [30, -30] * 6,  # degrees
+    "angles": [40, -40] * 6,  # degrees
     "relative_positions": [0.4, 0.7, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.4, 0.7],  # in % branch length
     "angles": [40, -40] * 6,  # degrees
     "diameters": [8, 7, 7, 8, 10, 9, 7, 9, 8, 9, 10, 7],  # mm
     "length": 50,  # mm
 }
 
-wall_thickness = 3
+wall_thickness = 4
+
+# Define the output folder and file path
+output_folder = "output"
+output_file = os.path.join(output_folder, "vascular_tree.stl")
 
 # Precompute absolute positions of primary branches
 primary_branch_params["positions"] = [
@@ -139,5 +144,10 @@ for i, branch_angle in enumerate(primary_branch_params["angles"]):
 for hole in holes:
     main_branch = main_branch.cut(hole)
 
-# Export as an STL file
-cq.exporters.export(main_branch, "vascular_tree.stl")
+# Create the folder if it doesn't exist
+print("Finalizing and exporting the model...")
+os.makedirs(output_folder, exist_ok=True)
+
+# Export the file
+cq.exporters.export(main_branch, output_file)
+print(f"File successfully exported to {output_file}")
