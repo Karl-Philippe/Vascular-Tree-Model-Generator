@@ -2,51 +2,54 @@ import cadquery as cq
 import math
 
 # Parameters
-main_branch_diameter = 20  # mm
-main_branch_length = 210  # mm (20 cm long)
-#branch_diameter_range = (10, 15)  # mm
-branch_length = 80  # mm (5 cm long)
+main_branch_params = {
+    "diameter": 20,  # mm
+    "length": 210,  # mm
+}
 
-branch_angles = [120, -140, 80, -70, 30, -40] 
-relative_branch_positions = [0.25, 0.35, 0.45, 0.55, 0.65, 0.75] 
-branch_positions = [i * main_branch_length for i in relative_branch_positions]
-branch_diameters = [10, 12, 13, 11, 15, 11] # 10-15 mm
+primary_branch_params = {
+    "angles": [120, -140, 80, -70, 30, -40],
+    "relative_positions": [0.25, 0.35, 0.45, 0.55, 0.65, 0.75],
+    "diameters": [10, 12, 13, 11, 15, 11],  # mm
+    "length": 80,  # mm
+}
 
-secondary_branch_positions = [
-    0.4,0.8,
-    0.8,0.4,
-    0.8,0.4,
-    0.8,0.4,
-    0.8,0.4,
-    0.4,0.8,
-]  # in % branch length
-secondary_branch_angles = [
-    30, -30,
-    30, -30,
-    30, -30,
-    30, -30,
-    30, -30,
-    30, -30,    
-] # Range 30 - 70 degreess
-secondary_branch_diameters = [8, 7, 7, 8, 10, 9, 7, 9, 8, 9, 10, 7] # 5 - 10 mm
-secondary_branch_length = 50
+secondary_branch_params = {
+    "angles": [30, -30] * 6,  # degrees
+    "relative_positions": [0.4, 0.7, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.4, 0.7],  # in % branch length
+    "angles": [40, -40] * 6,  # degrees
+    "diameters": [8, 7, 7, 8, 10, 9, 7, 9, 8, 9, 10, 7],  # mm
+    "length": 50,  # mm
+}
 
+wall_thickness = 3
+
+# Precompute absolute positions of primary branches
+primary_branch_params["positions"] = [
+    pos * main_branch_params["length"] for pos in primary_branch_params["relative_positions"]
+]
+
+# Define main and branch creation functions
 def create_branch(position, angle, diameter, length):
-    """Create a single branch."""
-    return (
+    """Create a single branch (solid only)."""
+    outer_circle = cq.Sketch().circle(diameter / 2 + wall_thickness)
+    branch_sketch = outer_circle
+    branch = (
         cq.Workplane("XZ")
         .workplane(offset=position)
         .transformed(rotate=(0, angle, 0))
-        .circle(diameter / 2)
+        .placeSketch(branch_sketch)
         .extrude(length)
     )
+    return branch
 
 def create_secondary_branch(parent_position, parent_angle, offset_percent, angle, diameter, length):
-    """Create a secondary branch off a main or primary branch."""
-    offset_distance = offset_percent * branch_length
+    """Create a secondary branch (solid only)."""
+    offset_distance = offset_percent * primary_branch_params["length"]
     angle_rad = math.radians(parent_angle)
-
-    return (
+    outer_circle = cq.Sketch().circle(diameter / 2 + wall_thickness)
+    branch_sketch = outer_circle
+    secondary_branch = (
         cq.Workplane("XZ")
         .workplane(offset=parent_position)
         .transformed(
@@ -54,39 +57,87 @@ def create_secondary_branch(parent_position, parent_angle, offset_percent, angle
             offset=(
                 offset_distance * math.sin(angle_rad),
                 0,
-                offset_distance * math.cos(angle_rad)
-            )
+                offset_distance * math.cos(angle_rad),
+            ),
         )
-        .circle(diameter / 2)
+        .placeSketch(branch_sketch)
         .extrude(length)
     )
+    return secondary_branch
 
-# Create the main branch
-main_branch = cq.Workplane("XZ").circle(main_branch_diameter / 2).extrude(main_branch_length)
+# Define the main branch
+outer_circle = cq.Sketch().circle(main_branch_params["diameter"] / 2 + wall_thickness)
+main_branch = (
+    cq.Workplane("XZ")
+    .placeSketch(outer_circle)
+    .extrude(main_branch_params["length"])
+)
 
 # Add primary and secondary branches
-j = 0
-for i, branch_angle in enumerate(branch_angles):
-    branch_position = branch_positions[i]
-    branch_diameter = branch_diameters[i]
+holes = []
+
+# Add the main branch hole
+main_branch_hole = (
+    cq.Workplane("XZ")
+    .circle(main_branch_params["diameter"] / 2)
+    .extrude(main_branch_params["length"])
+)
+holes.append(main_branch_hole)
+
+secondary_index = 0
+for i, branch_angle in enumerate(primary_branch_params["angles"]):
+    branch_position = primary_branch_params["positions"][i]
+    branch_diameter = primary_branch_params["diameters"][i]
 
     # Create primary branch
-    branch = create_branch(branch_position, branch_angle, branch_diameter, branch_length)
+    branch = create_branch(branch_position, branch_angle, branch_diameter, primary_branch_params["length"])
     main_branch = main_branch.union(branch)
 
-    # Create secondary branches
-    for _ in range(2):  # Each primary branch has two secondary branches
-        secondary_branch_angle = branch_angle - secondary_branch_angles[j]
-        secondary_branch_diameter = secondary_branch_diameters[j]
-        secondary_branch_position = secondary_branch_positions[j]
+    # Add hole for the primary branch
+    hole = (
+        cq.Workplane("XZ")
+        .workplane(offset=branch_position)
+        .transformed(rotate=(0, branch_angle, 0))
+        .circle(branch_diameter / 2)
+        .extrude(primary_branch_params["length"])
+    )
+    holes.append(hole)
 
+    # Create secondary branches
+    for _ in range(2):
         secondary_branch = create_secondary_branch(
-            branch_position, branch_angle, 
-            secondary_branch_position, secondary_branch_angle, 
-            secondary_branch_diameter, secondary_branch_length
+            branch_position,
+            branch_angle,
+            secondary_branch_params["relative_positions"][secondary_index],
+            branch_angle - secondary_branch_params["angles"][secondary_index],
+            secondary_branch_params["diameters"][secondary_index],
+            secondary_branch_params["length"],
         )
         main_branch = main_branch.union(secondary_branch)
-        j += 1
+
+        # Add hole for the secondary branch
+        offset_distance = secondary_branch_params["relative_positions"][secondary_index] * primary_branch_params["length"]
+        hole = (
+            cq.Workplane("XZ")
+            .workplane(offset=branch_position)
+            .transformed(
+                rotate=(0, branch_angle - secondary_branch_params["angles"][secondary_index], 0),
+                offset=(
+                    offset_distance * math.sin(math.radians(branch_angle)),
+                    0,
+                    offset_distance * math.cos(math.radians(branch_angle)),
+                ),
+            )
+            .circle(secondary_branch_params["diameters"][secondary_index] / 2)
+            .extrude(secondary_branch_params["length"])
+        )
+        holes.append(hole)
+
+        secondary_index += 1
+
+# Subtract holes from the main structure
+for hole in holes:
+    main_branch = main_branch.cut(hole)
 
 # Export as an STL file
 cq.exporters.export(main_branch, "vascular_tree.stl")
