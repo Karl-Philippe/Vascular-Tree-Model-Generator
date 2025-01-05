@@ -5,7 +5,7 @@ import os
 # Parameters
 main_branch_params = {
     "diameter": 20,  # mm
-    "length": 200,  # mm
+    "length": 180,  # mm
 }
 
 primary_branch_params = {
@@ -19,7 +19,7 @@ secondary_branch_params = {
     "angles": [40, -40] * 6,  # degrees
     "relative_positions": [0.4, 0.7, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.4, 0.7],  # in % branch length
     "diameters": [8, 7, 7, 8, 10, 9, 7, 9, 8, 9, 10, 7],  # mm
-    "length": 50,  # mm
+    "length": 40,  # mm
 }
 
 wall_thickness = 4
