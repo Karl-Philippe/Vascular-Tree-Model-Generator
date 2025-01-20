@@ -3,6 +3,12 @@ import math
 import os
 
 # Parameters
+adapter_params = {
+    "internal_diameter": 5,  # mm
+    "extermal_diameter": 17, # mm
+    "length": 50,  # mm
+}
+
 main_branch_params = {
     "diameter": 20,  # mm
     "length": 180,  # mm
@@ -88,6 +94,44 @@ main_branch_hole = (
     .extrude(main_branch_params["length"])
 )
 holes.append(main_branch_hole)
+
+# Create the adapter tube (extruding in the opposite direction)
+print("Generating the adapter tube...")
+
+# Create the outer and inner circles for the tube
+outer_circle = cq.Sketch().circle(main_branch_params["diameter"] / 2 + wall_thickness)
+# Create the tube by subtracting the inner circle from the outer circle
+cap = (
+    cq.Workplane("XZ")
+    .workplane(offset=-wall_thickness)  # Offset in the opposite direction of the main branch
+    .placeSketch(outer_circle)
+    .extrude(wall_thickness, clean=True)  # Extrude the tube
+)
+
+# Union the adapter tube with the main branch
+main_branch = main_branch.union(cap)
+
+# Create the outer and inner circles for the tube
+outer_circle = cq.Sketch().circle(adapter_params["extermal_diameter"] / 2)
+# Create the tube by subtracting the inner circle from the outer circle
+adapter_tube = (
+    cq.Workplane("XZ")
+    .workplane(offset=-adapter_params["length"]-wall_thickness)  # Offset in the opposite direction of the main branch
+    .placeSketch(outer_circle)
+    .extrude(adapter_params["length"], clean=True)  # Extrude the tube
+)
+
+# Union the adapter tube with the main branch
+main_branch = main_branch.union(adapter_tube)
+
+# Add the main branch hole
+adapter_hole = (
+    cq.Workplane("XZ")
+    .workplane(offset=-adapter_params["length"]-wall_thickness)  # Offset in the opposite direction of the main branch
+    .circle(adapter_params["internal_diameter"]/2)
+    .extrude(adapter_params["length"]+wall_thickness)
+)
+holes.append(adapter_hole)
 
 secondary_index = 0
 for i, branch_angle in enumerate(primary_branch_params["angles"]):
