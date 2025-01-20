@@ -29,6 +29,7 @@ secondary_branch_params = {
 }
 
 wall_thickness = 4
+add_secondary_branches = True
 
 # Define the output folder and file path
 output_folder = "output"
@@ -154,37 +155,38 @@ for i, branch_angle in enumerate(primary_branch_params["angles"]):
     holes.append(hole)
 
     # Create secondary branches
-    for _ in range(2):
-        print(f"    Adding secondary branch connected to primary branch {i + 1}...")
-        secondary_branch = create_secondary_branch(
-            branch_position,
-            branch_angle,
-            secondary_branch_params["relative_positions"][secondary_index],
-            branch_angle - secondary_branch_params["angles"][secondary_index],
-            secondary_branch_params["diameters"][secondary_index],
-            secondary_branch_params["length"],
-        )
-        main_branch = main_branch.union(secondary_branch)
-
-        # Add hole for the secondary branch
-        offset_distance = secondary_branch_params["relative_positions"][secondary_index] * primary_branch_params["length"]
-        hole = (
-            cq.Workplane("XZ")
-            .workplane(offset=branch_position)
-            .transformed(
-                rotate=(0, branch_angle - secondary_branch_params["angles"][secondary_index], 0),
-                offset=(
-                    offset_distance * math.sin(math.radians(branch_angle)),
-                    0,
-                    offset_distance * math.cos(math.radians(branch_angle)),
-                ),
+    if add_secondary_branches:
+        for _ in range(2):
+            print(f"    Adding secondary branch connected to primary branch {i + 1}...")
+            secondary_branch = create_secondary_branch(
+                branch_position,
+                branch_angle,
+                secondary_branch_params["relative_positions"][secondary_index],
+                branch_angle - secondary_branch_params["angles"][secondary_index],
+                secondary_branch_params["diameters"][secondary_index],
+                secondary_branch_params["length"],
             )
-            .circle(secondary_branch_params["diameters"][secondary_index] / 2)
-            .extrude(secondary_branch_params["length"])
-        )
-        holes.append(hole)
+            main_branch = main_branch.union(secondary_branch)
 
-        secondary_index += 1
+            # Add hole for the secondary branch
+            offset_distance = secondary_branch_params["relative_positions"][secondary_index] * primary_branch_params["length"]
+            hole = (
+                cq.Workplane("XZ")
+                .workplane(offset=branch_position)
+                .transformed(
+                    rotate=(0, branch_angle - secondary_branch_params["angles"][secondary_index], 0),
+                    offset=(
+                        offset_distance * math.sin(math.radians(branch_angle)),
+                        0,
+                        offset_distance * math.cos(math.radians(branch_angle)),
+                    ),
+                )
+                .circle(secondary_branch_params["diameters"][secondary_index] / 2)
+                .extrude(secondary_branch_params["length"])
+            )
+            holes.append(hole)
+
+            secondary_index += 1
 
 # Subtract holes from the main structure
 print("Subtracting holes from the structure...")
