@@ -29,7 +29,7 @@ secondary_branch_params = {
 }
 
 wall_thickness = 4
-add_secondary_branches = True
+add_secondary_branches = False
 
 # Define the output folder and file path
 output_folder = "output"
