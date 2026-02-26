@@ -1,68 +1,149 @@
-
 # Vascular Tree Model Generator
 
-This repository contains a Python script that generates a 3D model of a vascular tree structure using CadQuery. The model consists of a main branch, primary branches, and secondary branches, with configurable parameters for dimensions, angles, and positions.
+This repository generates a **3D printable vascular tree STL** using **CadQuery**.  
+The geometry is driven by **JSON configuration files** (in `configs/`), so you can swap vessel layouts without touching the Python code.
 
 ![Example Vascular Tree Model](data/vessel_example.png)
 
+## What it builds
+
+- **Main branch** (a cylinder)
+- **Primary branches** attached along the main branch (angles/positions/diameters configurable)
+- Optional **secondary branches** (2 per primary branch)
+- Optional **adapter** section (enabled/disabled via config)
+- Optional **junction rounding** (fillet on intersection seams; avoids rounding cylinder rims)
+
+The script also generates and subtracts **lumen holes** so the result is a hollow vessel network rather than intersecting solids.
+
 ## Features
 
-- Create a main cylindrical branch as the base structure.
-- Add primary and secondary branches with custom angles, diameters, and relative positions.
-- Automatically subtract holes to ensure realistic connections between branches.
-- Export the final model as an STL file.
+- JSON-driven configuration (`configs/*.json`)
+- Primary + optional secondary branching
+- Optional adapter (`add_adapter`)
+- Optional interior/exterior organic rounding (`rounding`)
+- STL export to `output/`
 
 ## Requirements
 
-- Python 3.7 or higher
-- [CadQuery](https://cadquery.readthedocs.io/en/latest/) library
+- Python (CadQuery version decides exact Python requirement; **Python 3.9+ recommended**)
+- [CadQuery](https://cadquery.readthedocs.io/en/latest/)
 
 ## Installation
 
-1. Clone the repository:
-   ```bash
-   git clone <repository_url>
-   cd <repository_name>
-   ```
-2. Install the required Python libraries:
-   ```bash
-   pip install cadquery
-   ```
+```bash
+git clone <repository_url>
+cd <repository_name>
+
+python -m venv .venv
+source .venv/bin/activate
+
+pip install cadquery
+```
+
+## Repository structure
+
+```text
+.
+├── generate_vessel_tree.py
+├── configs/
+│   ├── vascular_tree_default.json
+│   └── vascular_tree_25mm.json
+├── output/
+└── data/
+    └── vessel_example.png
+```
 
 ## Usage
 
-1. Configure the parameters for the main, primary, and secondary branches in the script:
-   - `main_branch_params`: Dimensions of the main branch.
-   - `primary_branch_params`: Angles, positions, diameters, and lengths for primary branches.
-   - `secondary_branch_params`: Angles, positions, diameters, and lengths for secondary branches.
-   - `wall_thickness`: Thickness of the vascular walls.
+1. Pick or create a config in `configs/` (JSON).
+2. Open `generate_vessel_tree.py` and set:
 
-2. Run the script:
-   ```bash
-   python generate_vascular_tree.py
-   ```
+```python
+CONFIG_FILE = "vascular_tree_25mm.json"
+```
 
-3. The generated STL file will be saved in the `output` folder as `vascular_tree.stl`.
+3. Run:
+
+```bash
+python generate_vessel_tree.py
+```
+
+4. Output is written to:
+
+```text
+output/<filename-from-config>.stl
+```
+
+## Configuration format (JSON)
+
+A valid config looks like this (keys are in **mm** and **degrees**):
+
+```json
+{
+  "main_branch_params": { "diameter": 25, "length": 180 },
+
+  "primary_branch_params": {
+    "angles": [120, -140, 80, -70, 30, -40],
+    "relative_positions": [0.25, 0.35, 0.45, 0.55, 0.65, 0.75],
+    "diameters": [8, 10, 13, 11, 18, 16],
+    "length": 40
+  },
+
+  "secondary_branch_params": {
+    "angles": [40, -40, 40, -40],
+    "relative_positions": [0.4, 0.7, 0.7, 0.4],
+    "diameters": [3, 2, 3, 4],
+    "length": 40
+  },
+
+  "wall_thickness": 4,
+
+  "add_adapter": false,
+  "adapter_params": {
+    "internal_diameter": 7,
+    "external_diameter": 17,
+    "length": 50
+  },
+
+  "add_secondary_branches": false,
+
+  "rounding": {
+    "external_intersection_rounding": 1.0,
+    "external_micro_rounding": 0.5,
+    "internal_intersection_rounding": 1.0,
+    "internal_micro_rounding": 0.5
+  },
+
+  "output": { "folder": "output", "filename": "vascular_tree.stl" }
+}
+```
+
+### Notes / constraints (important)
+
+- `primary_branch_params.angles`, `relative_positions`, and `diameters` must have the **same length**.
+- `relative_positions` are fractions of `main_branch_params.length` (0 → start, 1 → end).
+- If `add_secondary_branches` is `true`, the script expects **2 secondary branches per primary**:
+  - `len(secondary_branch_params.angles)` must be at least `2 * num_primary`.
+  - Same for `secondary_branch_params.diameters` and `relative_positions`.
+- If `add_adapter` is `false`, the script **skips** adapter geometry (cap/tube/lumen) even if `adapter_params` exists.
+- Rounding radii are in **mm**. Set them to `0.0` to disable rounding.
 
 ## Output
 
 The script generates:
-- A 3D STL model of the vascular tree with realistic connections and branching structure.
 
-## Example Parameters
-
-The default configuration creates:
-- A main branch with a diameter of 20 mm and a length of 200 mm.
-- Six primary branches with varying angles, positions, and diameters.
-- Secondary branches connected to each primary branch, with alternating angles and positions.
+- One STL file written to the folder specified by `output.folder`
+- Filename specified by `output.filename`
 
 ## Customization
 
-Modify the branch parameters in the script to customize:
-- Branch dimensions (diameter and length).
-- Angles for branch rotation.
-- Positions along the parent branch.
-- Wall thickness of the vascular structure.
+You can create multiple JSON presets in `configs/` and switch between them by changing `CONFIG_FILE`:
+
+- Different vessel sizes (diameters/lengths)
+- Different branching patterns (more/less primary branches, different angles)
+- Enable/disable secondary branches
+- Enable/disable adapter
+- Tune wall thickness and rounding
 
 ## License
 
