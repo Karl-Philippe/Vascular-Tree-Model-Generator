@@ -9,7 +9,7 @@ from copy import deepcopy
 # =============================================================================
 
 CONFIG_DIR = "configs"
-CONFIG_FILE = "vascular_tree_25mm.json"  # Change this to switch presets
+CONFIG_FILE = "vascular_tree_default.json"  # Change this to switch presets
 CONFIG_PATH = os.path.join(CONFIG_DIR, CONFIG_FILE)
 
 # =============================================================================
