@@ -9,7 +9,7 @@ from copy import deepcopy
 # =============================================================================
 
 CONFIG_DIR = "configs"
-CONFIG_FILE = "vascular_tree_default.json"  # Change this to switch presets
+CONFIG_FILE = "vascular_tree_3D.json"  # Change this to switch presets
 CONFIG_PATH = os.path.join(CONFIG_DIR, CONFIG_FILE)
 
 # =============================================================================
@@ -32,6 +32,22 @@ def require_keys(d, keys, ctx):
         raise KeyError(f"Missing key(s) in {ctx}: {missing}")
 
 
+def _expand_angles(value, n, name):
+    """
+    Allow config to specify:
+      - missing -> handled elsewhere
+      - scalar number -> expanded to length n
+      - list -> validated length n
+    """
+    if isinstance(value, (int, float)):
+        return [float(value)] * n
+    if isinstance(value, list):
+        if len(value) != n:
+            raise ValueError(f"{name} length must match angles length (expected {n}, got {len(value)})")
+        return [float(v) for v in value]
+    raise TypeError(f"{name} must be a number or a list of numbers")
+
+
 def normalize_and_validate_config(cfg, source="<config>"):
     cfg = deepcopy(cfg)
 
@@ -39,7 +55,9 @@ def normalize_and_validate_config(cfg, source="<config>"):
     cfg.setdefault("add_adapter", True)
     cfg.setdefault("add_secondary_branches", False)
 
-    # Required top-level blocks (adapter_params handled conditionally)
+    # New backward-compatible default (helps booleans not fail on “just touching”)
+    cfg.setdefault("junction_overlap", 0.3)  # mm of overlap pushed into parent at each junction
+
     require_keys(
         cfg,
         [
@@ -78,7 +96,6 @@ def normalize_and_validate_config(cfg, source="<config>"):
 
         require_keys(adapter_params, ["internal_diameter", "external_diameter", "length"], "adapter_params")
     else:
-        # If adapter params exist, normalize spelling anyway (harmless)
         if (
             adapter_params is not None
             and "external_diameter" not in adapter_params
@@ -106,6 +123,8 @@ def normalize_and_validate_config(cfg, source="<config>"):
         raise ValueError("wall_thickness must be >= 0")
     if main_branch_params["diameter"] <= 0 or main_branch_params["length"] <= 0:
         raise ValueError("main_branch_params diameter and length must be > 0")
+    if cfg["junction_overlap"] < 0:
+        raise ValueError("junction_overlap must be >= 0")
 
     # Validate primary branch arrays
     n_primary = len(primary_branch_params["angles"])
@@ -115,6 +134,14 @@ def normalize_and_validate_config(cfg, source="<config>"):
         raise ValueError("primary_branch_params.diameters length must match angles length")
     if n_primary == 0:
         raise ValueError("primary_branch_params must contain at least one branch")
+
+    # NEW: optional radial angles (azimuth) for primary branches
+    if "radial_angles" not in primary_branch_params:
+        primary_branch_params["radial_angles"] = [0.0] * n_primary
+    else:
+        primary_branch_params["radial_angles"] = _expand_angles(
+            primary_branch_params["radial_angles"], n_primary, "primary_branch_params.radial_angles"
+        )
 
     for i, rp in enumerate(primary_branch_params["relative_positions"]):
         if not (0.0 <= rp <= 1.0):
@@ -134,11 +161,26 @@ def normalize_and_validate_config(cfg, source="<config>"):
                 f"Not enough secondary branches configured: need at least {expected_secondary}, got {n_secondary}"
             )
 
+        # NEW: optional radial angles for secondary branches
+        if "radial_angles" not in secondary_branch_params:
+            secondary_branch_params["radial_angles"] = [0.0] * n_secondary
+        else:
+            secondary_branch_params["radial_angles"] = _expand_angles(
+                secondary_branch_params["radial_angles"], n_secondary, "secondary_branch_params.radial_angles"
+            )
+
         for i, rp in enumerate(secondary_branch_params["relative_positions"]):
             if not (0.0 <= rp <= 1.0):
                 raise ValueError(f"secondary_branch_params.relative_positions[{i}]={rp} must be between 0 and 1")
+    else:
+        # Still normalize radial_angles if present (harmless)
+        if "radial_angles" in secondary_branch_params:
+            n_secondary = len(secondary_branch_params["angles"])
+            secondary_branch_params["radial_angles"] = _expand_angles(
+                secondary_branch_params["radial_angles"], n_secondary, "secondary_branch_params.radial_angles"
+            )
 
-    # Precompute absolute positions of primary branches
+    # Precompute absolute positions of primary branches along MAIN LENGTH (we use +Z as main axis)
     primary_branch_params["positions"] = [
         pos * main_branch_params["length"] for pos in primary_branch_params["relative_positions"]
     ]
@@ -147,7 +189,95 @@ def normalize_and_validate_config(cfg, source="<config>"):
 
 
 # =============================================================================
-# HELPERS
+# 3D VECTOR / ORIENTED WORKPLANE HELPERS
+# =============================================================================
+
+def _v_add(a, b):
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+def _v_sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+def _v_mul(a, s):
+    return (a[0] * s, a[1] * s, a[2] * s)
+
+def _v_dot(a, b):
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+
+def _v_cross(a, b):
+    return (
+        a[1]*b[2] - a[2]*b[1],
+        a[2]*b[0] - a[0]*b[2],
+        a[0]*b[1] - a[1]*b[0],
+    )
+
+def _v_norm(a):
+    return math.sqrt(_v_dot(a, a))
+
+def _v_unit(a):
+    n = _v_norm(a)
+    if n <= 1e-12:
+        raise ValueError("Zero-length direction vector")
+    return (a[0]/n, a[1]/n, a[2]/n)
+
+
+def direction_from_signed_deflection_and_radial(deflection_deg, radial_deg):
+    """
+    Main trunk axis is +Z.
+
+    deflection_deg is SIGNED like your existing config:
+      +angle  => one side of the reference plane
+      -angle  => the opposite side
+
+    radial_deg rotates that reference plane around the trunk axis (+Z).
+    """
+    elev = abs(float(deflection_deg))  # tilt away from +Z
+    base_azim = 0.0 if deflection_deg >= 0 else 180.0
+    azim = base_azim + float(radial_deg)
+
+    e = math.radians(elev)
+    a = math.radians(azim)
+
+    # Spherical coords around +Z:
+    # x = sin(e)*cos(a), y = sin(e)*sin(a), z = cos(e)
+    return _v_unit((
+        math.sin(e) * math.cos(a),
+        math.sin(e) * math.sin(a),
+        math.cos(e),
+    ))
+
+
+def oriented_workplane(origin, normal):
+    """
+    Create a workplane whose normal points along `normal` and whose origin is `origin`.
+    We pick a stable xDir perpendicular to normal.
+    """
+    n = _v_unit(normal)
+
+    # Pick a reference axis not (almost) parallel to n
+    ref = (1.0, 0.0, 0.0) if abs(_v_dot(n, (1.0, 0.0, 0.0))) < 0.9 else (0.0, 1.0, 0.0)
+    xdir = _v_unit(_v_cross(ref, n))
+
+    plane = cq.Plane(
+        origin=cq.Vector(*origin),
+        xDir=cq.Vector(*xdir),
+        normal=cq.Vector(*n),
+    )
+    return cq.Workplane(plane)
+
+
+def make_cylinder(origin, direction, radius, length, overlap_back=0.0):
+    """
+    Cylinder starts slightly 'inside' the parent (overlap_back) to make unions/cuts happier.
+    It extrudes FORWARD along `direction`.
+    """
+    d = _v_unit(direction)
+    o = _v_sub(origin, _v_mul(d, overlap_back))
+    return oriented_workplane(o, d).circle(radius).extrude(length + overlap_back)
+
+
+# =============================================================================
+# CADQUERY HELPERS
 # =============================================================================
 
 def safe_clean(wp, label=""):
@@ -159,49 +289,6 @@ def safe_clean(wp, label=""):
     except Exception:
         pass
     return wp
-
-
-def create_branch(position, angle, diameter, length, wall_thickness):
-    """Create a single branch (solid only)."""
-    outer_circle = cq.Sketch().circle(diameter / 2 + wall_thickness)
-    return (
-        cq.Workplane("XZ")
-        .workplane(offset=position)
-        .transformed(rotate=(0, angle, 0))
-        .placeSketch(outer_circle)
-        .extrude(length)
-    )
-
-
-def create_secondary_branch(
-    parent_position,
-    parent_angle,
-    parent_length,
-    offset_percent,
-    angle,
-    diameter,
-    length,
-    wall_thickness,
-):
-    """Create a secondary branch (solid only)."""
-    offset_distance = offset_percent * parent_length
-    angle_rad = math.radians(parent_angle)
-
-    outer_circle = cq.Sketch().circle(diameter / 2 + wall_thickness)
-    return (
-        cq.Workplane("XZ")
-        .workplane(offset=parent_position)
-        .transformed(
-            rotate=(0, angle, 0),
-            offset=(
-                offset_distance * math.sin(angle_rad),
-                0,
-                offset_distance * math.cos(angle_rad),
-            ),
-        )
-        .placeSketch(outer_circle)
-        .extrude(length)
-    )
 
 
 def select_non_circular_edges(wp):
@@ -258,9 +345,10 @@ def build_vascular_tree(cfg):
     primary_branch_params = cfg["primary_branch_params"]
     secondary_branch_params = cfg["secondary_branch_params"]
 
-    wall_thickness = cfg["wall_thickness"]
+    wall_thickness = float(cfg["wall_thickness"])
     add_adapter = cfg.get("add_adapter", True)
     add_secondary_branches = cfg["add_secondary_branches"]
+    overlap = float(cfg.get("junction_overlap", 0.3))
 
     external_intersection_rounding = cfg["rounding"]["external_intersection_rounding"]
     external_micro_rounding = cfg["rounding"]["external_micro_rounding"]
@@ -273,53 +361,59 @@ def build_vascular_tree(cfg):
     print(f"Using config: {CONFIG_PATH}")
     print(f"Output file: {output_file}")
     print(f"add_adapter={add_adapter}, add_secondary_branches={add_secondary_branches}")
+    print(f"junction_overlap={overlap:.3f} mm")
+
+    # -------------------------------------------------------------------------
+    # Coordinate convention:
+    # - Main trunk is along +Z
+    # - Main trunk base is at z=0, top at z=main_length
+    # - Radial angles rotate around +Z
+    # -------------------------------------------------------------------------
 
     # Main outer solid
     print("Generating the main branch...")
-    main_outer = cq.Sketch().circle(main_branch_params["diameter"] / 2 + wall_thickness)
-    main_branch = cq.Workplane("XZ").placeSketch(main_outer).extrude(main_branch_params["length"])
+    main_outer_r = main_branch_params["diameter"] / 2 + wall_thickness
+    main_len = main_branch_params["length"]
+
+    main_branch = cq.Workplane("XY").circle(main_outer_r).extrude(main_len)
     main_branch = safe_clean(main_branch, "main branch")
 
     holes = []
 
     # Main lumen
     print("Generating main lumen...")
-    main_branch_hole = (
-        cq.Workplane("XZ")
-        .circle(main_branch_params["diameter"] / 2)
-        .extrude(main_branch_params["length"])
-    )
-    holes.append(main_branch_hole)
+    main_inner_r = main_branch_params["diameter"] / 2
+    main_lumen = cq.Workplane("XY").circle(main_inner_r).extrude(main_len)
+    holes.append(main_lumen)
 
-    # Optional adapter geometry
+    # Optional adapter geometry (extends toward -Z)
     if add_adapter:
         print("Generating the adapter cap...")
-        cap_outer = cq.Sketch().circle(main_branch_params["diameter"] / 2 + wall_thickness)
         cap = (
-            cq.Workplane("XZ")
+            cq.Workplane("XY")
             .workplane(offset=-wall_thickness)
-            .placeSketch(cap_outer)
+            .circle(main_outer_r)
             .extrude(wall_thickness, clean=True)
         )
         main_branch = main_branch.union(cap, clean=True)
 
         print("Generating the adapter tube...")
         adapter_outer_diam = adapter_params["external_diameter"]
-        adapter_outer = cq.Sketch().circle(adapter_outer_diam / 2)
+        adapter_len = adapter_params["length"]
         adapter_tube = (
-            cq.Workplane("XZ")
-            .workplane(offset=-adapter_params["length"] - wall_thickness)
-            .placeSketch(adapter_outer)
-            .extrude(adapter_params["length"], clean=True)
+            cq.Workplane("XY")
+            .workplane(offset=-(adapter_len + wall_thickness))
+            .circle(adapter_outer_diam / 2)
+            .extrude(adapter_len, clean=True)
         )
         main_branch = main_branch.union(adapter_tube, clean=True)
 
         print("Generating adapter lumen...")
         adapter_hole = (
-            cq.Workplane("XZ")
-            .workplane(offset=-adapter_params["length"] - wall_thickness)
+            cq.Workplane("XY")
+            .workplane(offset=-(adapter_len + wall_thickness))
             .circle(adapter_params["internal_diameter"] / 2)
-            .extrude(adapter_params["length"] + wall_thickness)
+            .extrude(adapter_len + wall_thickness)
         )
         holes.append(adapter_hole)
     else:
@@ -329,65 +423,80 @@ def build_vascular_tree(cfg):
     secondary_index = 0
     n_primary = len(primary_branch_params["angles"])
 
-    for i, branch_angle in enumerate(primary_branch_params["angles"]):
-        branch_position = primary_branch_params["positions"][i]
-        branch_diameter = primary_branch_params["diameters"][i]
+    for i in range(n_primary):
+        defl = float(primary_branch_params["angles"][i])
+        radial = float(primary_branch_params["radial_angles"][i])
+        branch_position_z = float(primary_branch_params["positions"][i])
+        branch_diameter = float(primary_branch_params["diameters"][i])
+        branch_len = float(primary_branch_params["length"])
 
-        print(f"Adding primary branch {i + 1}/{n_primary}...")
-        branch = create_branch(
-            branch_position,
-            branch_angle,
-            branch_diameter,
-            primary_branch_params["length"],
-            wall_thickness,
+        # Attachment point on main trunk (x=0,y=0,z=position)
+        P = (0.0, 0.0, branch_position_z)
+
+        # 3D direction with radial “twist” around trunk
+        d_primary = direction_from_signed_deflection_and_radial(defl, radial)
+
+        print(f"Adding primary branch {i + 1}/{n_primary} (angle={defl}°, radial={radial}°)...")
+
+        # Outer branch solid
+        primary_outer = make_cylinder(
+            origin=P,
+            direction=d_primary,
+            radius=branch_diameter / 2 + wall_thickness,
+            length=branch_len,
+            overlap_back=overlap,
         )
-        main_branch = main_branch.union(branch, clean=True)
+        main_branch = main_branch.union(primary_outer, clean=True)
 
         # Primary lumen
-        hole = (
-            cq.Workplane("XZ")
-            .workplane(offset=branch_position)
-            .transformed(rotate=(0, branch_angle, 0))
-            .circle(branch_diameter / 2)
-            .extrude(primary_branch_params["length"])
+        primary_hole = make_cylinder(
+            origin=P,
+            direction=d_primary,
+            radius=branch_diameter / 2,
+            length=branch_len,
+            overlap_back=overlap,
         )
-        holes.append(hole)
+        holes.append(primary_hole)
 
+        # Secondary branches
         if add_secondary_branches:
             for _ in range(2):
-                print(f"  Adding secondary branch on primary {i + 1} (idx {secondary_index})...")
-                sec_angle_rel = secondary_branch_params["angles"][secondary_index]
-                sec_angle = branch_angle - sec_angle_rel
-                sec_diam = secondary_branch_params["diameters"][secondary_index]
-                sec_len = secondary_branch_params["length"]
-                sec_rel = secondary_branch_params["relative_positions"][secondary_index]
+                sec_angle_rel = float(secondary_branch_params["angles"][secondary_index])
+                sec_defl = defl - sec_angle_rel  # preserve your original semantics
+                sec_diam = float(secondary_branch_params["diameters"][secondary_index])
+                sec_len = float(secondary_branch_params["length"])
+                sec_rel = float(secondary_branch_params["relative_positions"][secondary_index])
 
-                secondary_branch = create_secondary_branch(
-                    branch_position,
-                    branch_angle,
-                    primary_branch_params["length"],
-                    sec_rel,
-                    sec_angle,
-                    sec_diam,
-                    sec_len,
-                    wall_thickness,
+                # Secondary radial is relative “twist” added to the parent’s radial
+                sec_radial_rel = float(secondary_branch_params["radial_angles"][secondary_index])
+                sec_radial = radial + sec_radial_rel
+
+                # Attach along the primary branch direction
+                offset_distance = sec_rel * branch_len
+                Psec = _v_add(P, _v_mul(d_primary, offset_distance))
+
+                d_secondary = direction_from_signed_deflection_and_radial(sec_defl, sec_radial)
+
+                print(
+                    f"  Adding secondary (idx {secondary_index}) "
+                    f"(rel_angle={sec_angle_rel}°, abs_angle={sec_defl}°, radial={sec_radial}°)..."
                 )
-                main_branch = main_branch.union(secondary_branch, clean=True)
 
-                offset_distance = sec_rel * primary_branch_params["length"]
-                sec_hole = (
-                    cq.Workplane("XZ")
-                    .workplane(offset=branch_position)
-                    .transformed(
-                        rotate=(0, sec_angle, 0),
-                        offset=(
-                            offset_distance * math.sin(math.radians(branch_angle)),
-                            0,
-                            offset_distance * math.cos(math.radians(branch_angle)),
-                        ),
-                    )
-                    .circle(sec_diam / 2)
-                    .extrude(sec_len)
+                sec_outer = make_cylinder(
+                    origin=Psec,
+                    direction=d_secondary,
+                    radius=sec_diam / 2 + wall_thickness,
+                    length=sec_len,
+                    overlap_back=overlap,
+                )
+                main_branch = main_branch.union(sec_outer, clean=True)
+
+                sec_hole = make_cylinder(
+                    origin=Psec,
+                    direction=d_secondary,
+                    radius=sec_diam / 2,
+                    length=sec_len,
+                    overlap_back=overlap,
                 )
                 holes.append(sec_hole)
 

@@ -1,0 +1,38 @@
+{
+  "adapter_params": {
+    "internal_diameter": 6,
+    "external_diameter": 17,
+    "length": 50
+  },
+  "main_branch_params": {
+    "diameter": 6,
+    "length": 80
+  },
+  "primary_branch_params": {
+    "angles": [90, -70, 50, -40, 30, -20],
+    "radial_angles": [0, 30, 60, 90, 120, 150],
+    "relative_positions": [0.1, 0.2, 0.3, 0.45, 0.55, 0.7],
+    "diameters": [3, 3, 2.5, 2.5, 2, 2],
+    "length": 30
+  },
+  "secondary_branch_params": {
+    "angles": [40, -40, 40, -40, 40, -40, 40, -40, 40, -40, 40, -40],
+    "radial_angles": [20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20],
+    "relative_positions": [0.4, 0.7, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.7, 0.4, 0.4, 0.7],
+    "diameters": [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+    "length": 20
+  },
+  "wall_thickness": 0.5,
+  "add_secondary_branches": false,
+  "rounding": {
+    "external_intersection_rounding": 1.0,
+    "external_micro_rounding": 0.0,
+    "internal_intersection_rounding": 1.0,
+    "internal_micro_rounding": 0.0
+  },
+  "output": {
+    "folder": "output",
+    "filename": "vascular_tree.stl"
+  }
+}
+
